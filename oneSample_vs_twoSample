@@ -1,0 +1,206 @@
+#Figure 11, Section 3.2.1 in DOI 10.1002/gepi.22512
+#Sex strat sims collider correction
+library(mr.raps);library(tidyverse);library(patchwork)
+setwd('/lustre/home/vk282/sex_strat/Review_Sims_8722/oneSample_vs_TwoSample/')
+NSim = 20000
+#N = round(seq(8000,290000,length.out = 5))
+#8.7.22
+#New sim's, vary SNPs
+L_Vec = c(5,12,30,50,100); gamma_strength_Vec=c(0.6,0.3,0.2,0.15,0.07)
+
+N_Vec = round(seq(6000,20000,length.out=8))
+
+pv_coll=data.frame(matrix(nrow = NSim,ncol = 3));colnames(pv_coll)=c('Collider','2sls','GxE')
+res_coll=data.frame(matrix(nrow = length(L_Vec),ncol=13))
+colnames(res_coll) = c('N', 'beta_1smr','SE_1smr','Coverage_1smr','Power_1smr',
+                            'beta_2smr','SE_2smr','Coverage_2smr','Power_2smr')
+beta_hat = se_beta_hat=beta_2smr=SE_2smr= NULL
+
+for (sample1 in 1:length(N_Vec)){
+  n = N_Vec[sample1];FStrat = FUnStrat  = RHO = NULL
+  #gamma_mean=gamma_strength_Vec[sample1]; n=N
+  gamma_mean=0.3; L=25
+  
+  for (nss in 1:NSim){
+    #Genes, U
+    #L=25
+    S = rbinom(n,1,0.5);G = matrix(rbinom(n = n*L,size = 1,prob = 0.2),nrow = n,ncol = L);U = rnorm(n,0,9)
+    epsilon = rnorm(n,0,2);alpha   = matrix(rnorm(L,0,0.2), nrow = L, ncol = 1)
+    gamma   = matrix(rnorm(L,gamma_mean,0.2), nrow = L, ncol = 1) + alpha
+    delta   = matrix(runif(L,0.4,2), nrow = L, ncol = 1)
+    gamma_S = 0.1;X =  G%*%gamma + gamma_S*S +  S*(G %*%delta)+ U + epsilon
+    
+    Xm = X[S==1]; Gm = subset(G,S==1); ResM = summary(lm(Xm~Gm));rsq_m=rsq_f=NULL
+    rsq_m[sample1]=ResM$r.squared; BetaXGm = ResM$coef[-1,1]; seBetaXGm = ResM$coef[-1,2]
+    
+    Xf = X[S==0]; Gf = subset(G,S==0); ResF = summary(lm(Xf~Gf));rsq_f[sample1]=ResF$r.squared; BetaXGf = ResF$coef[-1,1]; seBetaXGf = ResF$coef[-1,2]
+    # Extract G-X associations in everyone
+    Res = summary(lm(X~G)); BetaXG = Res$coef[-1,1]; seBetaXG = Res$coef[-1,2]
+    # Calculate SNP-exposure association difference in men and women
+    DiffX = BetaXGm-BetaXGf ; seDiffX = sqrt(seBetaXGm^2+seBetaXGf^2 )
+    betaX = 0.4; betaS = 0.2;epsilon2 = rnorm(n,0,12)
+    Y =  betaX*X + betaS*S + G %*%alpha + U + epsilon2# + S * (G %*% theta1_v1)
+    Ym = Y[S==1];Gm = subset(G,S==1);Xm = X[S==1];ResM = summary(lm(Ym~Gm));BetaYGm = ResM$coef[-1,1];seBetaYGm  = ResM$coef[-1,2]
+    Yf = Y[S==0];Gf = subset(G,S==0);Xg= X[S==0];ResF = summary(lm(Yf~Gf));BetaYGf = ResF$coef[-1,1];seBetaYGf = ResF$coef[-1,2]
+    
+    # Extract G-Y associations in everyone
+    Res       = summary(lm(Y~G));BetaYG    = Res$coef[-1,1];seBetaYG  = Res$coef[-1,2]
+    # Calculate SNP-outcomw association difference in men and women
+    DiffY = BetaYGm-BetaYGf ; seDiffY = sqrt(seBetaYGm^2+seBetaYGf^2)
+    
+    #Coll. Corr #1/ collider-biased estimated coefficient of X,betahat_star
+    yxg_coll=summary(lm(Y ~ X + G *S))$coef
+    beta_hat_star=yxg_coll[2,1]; se_beta_hat_star=yxg_coll[2,2]
+    
+    #2/ collider-biased estimated coeff of G, alphahat_star
+    yxg_coll_M=summary(lm(Ym ~ Xm + Gm))$coef
+    alpha_hat_star1=yxg_coll_M[-c(1,2),1]; se_alpha_hat_star1=yxg_coll_M[-c(1,2),2]
+    
+    yxg_coll_F=summary(lm(Yf ~ Xf + Gf))$coef
+    alpha_hat_star0=yxg_coll_F[-c(1,2),1]; se_alpha_hat_star0=yxg_coll_F[-c(1,2),2]
+    Diff_alphahat = alpha_hat_star1 - alpha_hat_star0
+    se_Diff_alphahat = sqrt(se_alpha_hat_star1^2 + se_alpha_hat_star0^2)
+    
+    #plot(DiffX,Diff_alphahat)
+    #3/ fit raps to estimate 
+    betahat_diff = mr.raps.all(b_exp = DiffX,b_out = Diff_alphahat,
+                               se_exp = seDiffX,se_out = se_Diff_alphahat)
+    
+    #change to od_F  and L2 loss function 
+    beta_hat[nss] = beta_hat_star + betahat_diff[1,3];se_beta_hat[nss] = sqrt(se_beta_hat_star^2 + betahat_diff[1,4]^2)
+    zst=beta_hat[nss]/se_beta_hat[nss];pv_coll[nss,1]=2*(1-pnorm(abs(zst)))
+    
+    #Comparator 2sls
+    #X_hat1_2s=predict(lm(X ~ G));est_2sls=summary(lm(Y ~ X_hat1_2s));est_2s1[nss] = est_2sls$coef[2,1];SE_2s1[nss] = est_2sls$coef[2,2];pv_coll[nss,2] = est_2sls$coef[2,4]
+    
+    #Comparator MR GxE
+    #xhatGxE = predict(lm(X~G*S)); fitGxE = summary(lm(Y~xhatGxE+G+S)); est_GxE[nss] = fitGxE$coef[2,1];SE_GxE[nss] = fitGxE$coef[2,2];pv_coll[nss,3] = fitGxE$coef[2,4]
+    
+    #fstrat
+    FStrat[nss]   = mean(((BetaXGm-BetaXGf)^2)/(seBetaXGm^2+seBetaXGf^2))
+    FUnStrat[nss] = mean((BetaXG^2)/seBetaXG^2)
+    
+    ################################################################################################
+    ################################################################################################
+    #9.7.2022
+    #split data in two
+    random_splitID = sample(1:n,size = round(n/2),replace=F); XSample_ID1=random_splitID
+    vec3=1:n; YSample_ID1=vec3[-random_splitID]
+    
+    #Obtain SNP-X associations
+    X2=X[XSample_ID1]; G2=G[XSample_ID1,]; S2=S[XSample_ID1]
+    Xm2 = X2[S2==1]; Gm2 = subset(G2,S2==1); ResM2 = summary(lm(Xm2~Gm2));rsq_m=rsq_f=NULL
+    BetaXGm2 = ResM2$coef[-1,1]; seBetaXGm2 = ResM2$coef[-1,2]
+    
+    Xf2 = X2[S2==0]; Gf2 = subset(G2,S2==0); ResF2 = summary(lm(Xf2~Gf2)); BetaXGf2 = ResF2$coef[-1,1]; seBetaXGf2 = ResF2$coef[-1,2]
+    # Extract G-X associations in everyone
+    Res2 = summary(lm(X2~G2)); BetaXG2 = Res2$coef[-1,1]; seBetaXG2 = Res2$coef[-1,2]
+    # Calculate SNP-exposure association difference in men and women
+    DiffX2 = BetaXGm2-BetaXGf2 ; seDiffX2 = sqrt(seBetaXGm2^2+seBetaXGf2^2 )
+   
+    #-----------------------------------------------------------------------------------------------
+    #Obtain SNP-Y Associations
+    Y3=Y[YSample_ID1]; G3=G[YSample_ID1,]; S3=S[YSample_ID1]
+    
+    Ym3 = Y3[S3==1];Gm3 = subset(G3,S3==1); ResM3 = summary(lm(Ym3~Gm3))
+     BetaYGm3 = ResM3$coef[-1,1];seBetaYGm3  = ResM3$coef[-1,2]
+    Yf3 = Y3[S3==0];Gf3 = subset(G3,S3==0); ResF3 = summary(lm(Yf3~Gf3))
+    BetaYGf3 = ResF3$coef[-1,1];seBetaYGf3 = ResF3$coef[-1,2]
+    
+    # Extract G-Y associations in everyone
+    Res3 = summary(lm(Y3~G3));BetaYG3 = Res3$coef[-1,1];seBetaYG3 = Res3$coef[-1,2]
+    # Calculate SNP-outcomw association difference in men and women
+    DiffY3 = BetaYGm3-BetaYGf3 ; seDiffY3 = sqrt(seBetaYGm3^2+seBetaYGf3^2)
+    
+    #-----------------------------------------------------------------------------------------------
+    twoS_subs = mr.raps.all(b_exp = DiffX2,b_out = DiffY3, se_exp = seDiffX2,se_out = seDiffY3)
+    beta_2smr[nss] = twoS_subs[1,3]; SE_2smr[nss]=twoS_subs[1,4]
+    zst2s=beta_2smr[nss]/SE_2smr[nss];pv_coll[nss,2]=2*(1-pnorm(abs(zst2s)))
+    
+    ################################################################################################
+    ################################################################################################
+    sink('1s_NH_8222_N5.txt')
+    print(paste(sample1/length(N_Vec), 'Sims',nss/NSim))
+    sink()}
+  res_coll$N[sample1]=L
+  res_coll$F_strat[sample1]=mean(FStrat)
+  res_coll$F_unstrat[sample1]=mean(FUnStrat)
+  res_coll$beta_1smr[sample1]=mean(beta_hat)
+  res_coll$SE_1smr[sample1]=mean(se_beta_hat)
+  res_coll$beta_2smr[sample1]=mean(beta_2smr)
+  res_coll$SE_2smr[sample1]=mean(SE_2smr)
+  
+  res_coll$Power_1smr[sample1] = sum(pv_coll[,1]<0.05)/NSim
+  res_coll$Coverage_1smr[sample1] = sum((beta_hat-1.96*se_beta_hat < betaX) & (beta_hat + 1.96*se_beta_hat > betaX))/NSim 
+  res_coll$Power_2smr[sample1] = sum(pv_coll[,2]<0.05)/NSim
+  res_coll$Coverage_2smr[sample1] = sum((beta_2smr-1.96*SE_2smr < betaX) & (beta_2smr + 1.96*SE_2smr > betaX))/NSim 
+  
+  #res_coll$beta_GxE[sample1]=mean(est_GxE)
+  #res_coll$SE_GxE[sample1]=mean(SE_GxE)
+  #res_coll$Coverage_GxE[sample1] = sum((est_GxE-1.96*SE_GxE < betaX) & (est_GxE + 1.96*SE_GxE > betaX))/NSim 
+  #res_coll$Power_GxE[sample1] = sum(pv_coll[,3]<0.05)/NSim
+  
+  write.csv(res_coll,'1s_v_2s_31822.csv')}
+
+write.csv(res_coll,'1s_v_2s_31822_df.csv')
+res_coll=read.csv('1s_v_2s_31822_df.csv')
+
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#Plotting 11.7.22
+#0.x-axis with f-stat
+bias_df=res_coll %>%
+  dplyr::select(F_strat,F_unstrat,beta_1smr,beta_2smr) %>%
+  pivot_longer(beta_1smr:beta_2smr,names_to = "Method", values_to = "Bias")
+p <- ggplot(bias_df, aes(F_unstrat, Bias)) + geom_blank()+theme_classic() +xlab('F Statistic')#+
+  #scale_x_continuous(breaks=unique((round(bias_df$F_unstrat ))), labels = unique((bias_df$F_unstrat)))
+
+f_col1=p + theme(axis.line.y = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank(), axis.title.y = element_blank(),
+                 panel.grid.minor.y = element_blank(), panel.grid.major.y = element_blank())
+layout <- c(area(t = 0, l = 0, b = 109, r = 1), area(t = 0, l = 0, b = 108, r = 1))
+
+#1.Bias
+bias_df=res_coll %>%
+  dplyr::select(F_strat,F_unstrat,beta_1smr,beta_2smr) %>%
+  pivot_longer(beta_1smr:beta_2smr,names_to = "Method", values_to = "Bias")
+#bias_df$F =  as.numeric(sub("\\,.*", "", bias_df$F ))
+#bias_df$Bias=as.numeric(sub("\\(.*", "", bias_df$Bias))-betaX
+bias_df$Method=as.factor(bias_df$Method)
+levels(bias_df$Method) = c('1SMR','2SMR')
+
+i <- ggplot(bias_df, aes(F_strat , Bias, color=Method))
+pi=i+geom_line()+geom_point()+theme_light()
+BIAS_pl=pi + scale_colour_brewer(palette = 'Paired') +xlab('Stratified F Statistic')
+BIAS_axis = f_col1 + BIAS_pl + plot_layout(design = layout)
+
+#2.Power
+coverage_df=res_coll %>%
+  dplyr::select(F_strat,F_unstrat, Power_1smr,Power_2smr ) %>%
+  pivot_longer(Power_1smr:Power_2smr,names_to = "Method", values_to = "Power")
+
+#coverage_df$F =as.numeric(sub("\\,.*", "", coverage_df$F ))
+coverage_df$Method=as.factor(coverage_df$Method)
+levels(coverage_df$Method)=c('1SMR','2SMR')
+
+i <- ggplot(coverage_df, aes(F_strat , Power, color=Method))
+pi=i+geom_line()+geom_point()+theme_light()
+cov_pl=pi + scale_colour_brewer(palette = 'Paired') +xlab('Stratified F Statistic')
+POWER_axis = f_col1 + cov_pl + plot_layout(design = layout)
+
+#3.Coverage
+coverage_df=res_coll %>%
+  dplyr::select(F_strat,F_unstrat, Coverage_1smr,Coverage_2smr ) %>%
+  pivot_longer(Coverage_1smr:Coverage_2smr,names_to = "Method", values_to = "Coverage")
+
+#coverage_df$F =as.numeric(sub("\\,.*", "", coverage_df$F ))
+coverage_df$Method=as.factor(coverage_df$Method)
+levels(coverage_df$Method)=c('1SMR','2SMR')
+
+i <- ggplot(coverage_df, aes(F_strat , Coverage, color=Method))
+pi=i+geom_line()+geom_point()+theme_light()
+cov_pl=pi + scale_colour_brewer(palette = 'Paired') +xlab('Stratified F Statistic')
+COV_axis = f_col1 + cov_pl + plot_layout(design = layout)
+
+(BIAS_axis/(COV_axis|POWER_axis))+ plot_layout( guides = 'collect')
+ggsave('1s_v_2s_plot.pdf',width=8,height=6)
+
+#@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
