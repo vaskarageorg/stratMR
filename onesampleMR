@@ -1,0 +1,156 @@
+#Figure 5
+#Sex strat sims collider correction
+library(mr.raps);library(tidyverse)
+setwd('/lustre/home/vk282/sex_strat/fig_Coll/')
+NSim = 100;N = round(seq(10000,90000,length.out = 4))
+pv_coll=data.frame(matrix(nrow = NSim,ncol = 3));colnames(pv_coll)=c('Collider','2sls','GxE')
+res_coll=data.frame(matrix(nrow = length(N),ncol=13))
+colnames(res_coll) = c('N', 'beta','SE','Coverage','Power', 'beta_2sls','SE_2sls','Coverage_2sls','Power_2sls',
+                       'beta_GxE','SE_GxE','Coverage_GxE','Power_GxE')
+beta_hat = se_beta_hat=est_2s1=SE_2s1=est_GxE=SE_GxE=NULL
+
+for (sample1 in 1:length(N)){
+  n = N[sample1];FStrat = FUnStrat  = RHO = NULL
+  for (nss in 1:NSim){
+#Genes, U
+L=40;S = rbinom(n,1,0.5);G = matrix(rbinom(n = n*L,size = 1,prob = 0.2),nrow = n,ncol = L);U = rnorm(n,0,9)
+epsilon = rnorm(n,0,2);alpha   = matrix(rnorm(L,0,0.1), nrow = L, ncol = 1)
+gamma   = matrix(rnorm(L,0.1,0.2), nrow = L, ncol = 1) + alpha
+delta   = matrix(runif(L,0.1,0.8), nrow = L, ncol = 1)
+gamma_S = 0.1;X =  G%*%gamma + gamma_S*S +  S*(G %*%delta)+ U + epsilon
+
+Xm = X[S==1]; Gm = subset(G,S==1); ResM = summary(lm(Xm~Gm));rsq_m=rsq_f=NULL
+rsq_m[sample1]=ResM$r.squared; BetaXGm = ResM$coef[-1,1]; seBetaXGm = ResM$coef[-1,2]
+
+Xf = X[S==0]; Gf = subset(G,S==0); ResF = summary(lm(Xf~Gf));rsq_f[sample1]=ResF$r.squared; BetaXGf = ResF$coef[-1,1]; seBetaXGf = ResF$coef[-1,2]
+# Extract G-X associations in everyone
+Res = summary(lm(X~G)); BetaXG = Res$coef[-1,1]; seBetaXG = Res$coef[-1,2]
+# Calculate SNP-exposure association difference in men and women
+DiffX = BetaXGm-BetaXGf ; seDiffX = sqrt(seBetaXGm^2+seBetaXGf^2)
+betaX = 0.4; betaS = 0.2;epsilon2 = rnorm(n,0,12)
+Y =  betaX*X + betaS*S + G %*%alpha + U + epsilon2# + S * (G %*% theta1_v1)
+Ym = Y[S==1];Gm = subset(G,S==1);Xm = X[S==1];ResM = summary(lm(Ym~Gm));BetaYGm = ResM$coef[-1,1];seBetaYGm  = ResM$coef[-1,2]
+Yf = Y[S==0];Gf = subset(G,S==0);Xg= X[S==0];ResF = summary(lm(Yf~Gf));BetaYGf = ResF$coef[-1,1];seBetaYGf = ResF$coef[-1,2]
+
+# Extract G-Y associations in everyone
+Res       = summary(lm(Y~G));BetaYG    = Res$coef[-1,1];seBetaYG  = Res$coef[-1,2]
+# Calculate SNP-outcomw association difference in men and women
+DiffY = BetaYGm-BetaYGf ; seDiffY = sqrt(seBetaYGm^2+seBetaYGf^2)
+
+#Coll. Corr #1/ collider-biased estimated coefficient of X,betahat_star
+yxg_coll=summary(lm(Y ~ X + G *S))$coef
+beta_hat_star=yxg_coll[2,1]; se_beta_hat_star=yxg_coll[2,2]
+
+#2/ collider-biased estimated coeff of G, alphahat_star
+yxg_coll_M=summary(lm(Ym ~ Xm + Gm))$coef
+alpha_hat_star1=yxg_coll_M[-c(1,2),1]; se_alpha_hat_star1=yxg_coll_M[-c(1,2),2]
+
+yxg_coll_F=summary(lm(Yf ~ Xf + Gf))$coef
+alpha_hat_star0=yxg_coll_F[-c(1,2),1]; se_alpha_hat_star0=yxg_coll_F[-c(1,2),2]
+Diff_alphahat = alpha_hat_star1 - alpha_hat_star0
+se_Diff_alphahat = sqrt(se_alpha_hat_star1^2 + se_alpha_hat_star0^2)
+
+#plot(DiffX,Diff_alphahat)
+#3/ fit raps to estimate 
+betahat_diff = mr.raps.all(b_exp = DiffX,b_out = Diff_alphahat,
+                se_exp = seDiffX,se_out = se_Diff_alphahat)
+
+#change to od_F  and L2 loss function 
+beta_hat[nss] = beta_hat_star + betahat_diff[1,3];se_beta_hat[nss] = sqrt(se_beta_hat_star^2 + betahat_diff[1,4]^2)
+zst=beta_hat[nss]/se_beta_hat[nss];pv_coll[nss,1]=2*(1-pnorm(abs(zst)))
+
+#Comparator 2sls
+X_hat1_2s=predict(lm(X ~ G));est_2sls=summary(lm(Y ~ X_hat1_2s));est_2s1[nss] = est_2sls$coef[2,1];SE_2s1[nss] = est_2sls$coef[2,2];pv_coll[nss,2] = est_2sls$coef[2,4]
+
+#Comparator MR GxE
+xhatGxE = predict(lm(X~G*S)); fitGxE = summary(lm(Y~xhatGxE+G+S)); est_GxE[nss] = fitGxE$coef[2,1];SE_GxE[nss] = fitGxE$coef[2,2];pv_coll[nss,3] = fitGxE$coef[2,4]
+
+#fstrat
+FStrat[nss]   = mean(((BetaXGm-BetaXGf)^2)/(seBetaXGm^2+seBetaXGf^2))
+FUnStrat[nss] = mean((BetaXG^2)/seBetaXG^2)
+sink('coll_prog_7222.txt')
+print(paste(sample1/length(N), 'Sims',nss/NSim))
+sink()}
+  res_coll$N[sample1]=N[sample1]
+  res_coll$F_strat[sample1]=mean(FStrat)
+  res_coll$F_unstrat[sample1]=mean(FUnStrat)
+  res_coll$beta[sample1]=mean(beta_hat)
+  res_coll$SE[sample1]=mean(se_beta_hat)
+  res_coll$beta_2sls[sample1]=mean(est_2s1)
+  res_coll$SE_2sls[sample1]=mean(SE_2s1)
+  res_coll$Coverage[sample1] = sum((beta_hat-1.96*se_beta_hat < betaX) & (beta_hat + 1.96*se_beta_hat > betaX))/NSim 
+  res_coll$Coverage_2sls[sample1] = sum((est_2s1-1.96*SE_2s1 < betaX) & (est_2s1 + 1.96*SE_2s1 > betaX))/NSim 
+  res_coll$Power[sample1] = sum(pv_coll[,1]<0.05)/NSim
+  res_coll$Power_2sls[sample1] = sum(pv_coll[,2]<0.05)/NSim
+  
+  res_coll$beta_GxE[sample1]=mean(est_GxE)
+  res_coll$SE_GxE[sample1]=mean(SE_GxE)
+  res_coll$Coverage_GxE[sample1] = sum((est_GxE-1.96*SE_GxE < betaX) & (est_GxE + 1.96*SE_GxE > betaX))/NSim 
+  res_coll$Power_GxE[sample1] = sum(pv_coll[,3]<0.05)/NSim
+  
+  write.csv(res_coll,'res_coll_null_7222.csv')}
+
+res_coll_df=res_coll %>% dplyr::select(F_strat,beta,beta_2sls,beta_GxE) %>% 
+  pivot_longer(beta:beta_GxE, names_to = "Method", values_to = "Bias")
+res_coll_df$Method = as.factor(res_coll_df$Method)
+levels(res_coll_df$Method) =c('Collider Correction','2SLS','GxE')
+library(ggplot2);library(patchwork)
+
+i <- ggplot(res_coll_df, aes(F_strat, Bias-betaX,
+                             group=Method,
+                             color=Method))
+bias_pl = i + geom_line() + geom_point() + theme_light() + scale_colour_brewer(palette = 'Paired')
+
+write.csv(res_coll,'res_coll_null1_7222.csv')
+#######################################################################################################################
+
+res_coll_df=res_coll %>% dplyr::select(F_unstrat,F_strat,beta,beta_2sls,beta_GxE) %>% 
+  pivot_longer(beta:beta_GxE, names_to = "Method", values_to = "Bias")
+res_coll_df$Method = as.factor(res_coll_df$Method)
+levels(res_coll_df$Method) =c('Collider Correction','2SLS','GxE')
+
+bi <- ggplot(res_coll_df, aes(F_strat, Bias-0.4, group=Method, color=Method)) +geom_line() +geom_point()+ theme_light()+ scale_colour_brewer(palette = 'Paired')
+p <- ggplot(res_coll_df, aes(F_unstrat, Bias)) + geom_blank()+theme_classic() +
+  scale_x_continuous(breaks = round(seq(min(res_coll_df$F_unstrat), max(res_coll_df$F_unstrat), by = 5)))
+
+f_col1=p + theme(axis.line.y = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank(), axis.title.y = element_blank(),
+                 panel.grid.minor.y = element_blank(), panel.grid.major.y = element_blank())
+layout <- c(area(t = 0, l = 0, b = 109, r = 1), area(t = 0, l = 0, b = 108, r = 1))
+bias_axis = f_col1 + bi + plot_layout(design = layout)
+
+#######################################################################################################################
+res_coll_df=res_coll %>% dplyr::select(F_unstrat,F_strat,SE,SE_2sls,SE_GxE) %>% 
+  pivot_longer(SE:SE_GxE, names_to = "Method", values_to = "EmpSE")
+res_coll_df$Method = as.factor(res_coll_df$Method)
+levels(res_coll_df$Method) =c('Collider Correction','2SLS','GxE')
+
+sei <- ggplot(res_coll_df, aes(F_strat, EmpSE, group=Method,
+                               color=Method)) +geom_line()+ geom_point() + theme_light()+ scale_colour_brewer(palette = 'Paired')
+se_axis= f_col1 + sei + plot_layout(design = layout)
+######################################################################################################################
+res_coll_df=res_coll %>% dplyr::select(F_strat,Power,Power_2sls,Power_GxE) %>% 
+  pivot_longer(Power:Power_GxE, names_to = "Method", values_to = "Power")
+res_coll_df$Method = as.factor(res_coll_df$Method)
+levels(res_coll_df$Method) =c('Collider Correction','2SLS','GxE')
+
+pi <- ggplot(res_coll_df, aes(F_strat, Power, group=Method,
+                              color=Method)) +geom_line()+ geom_point() + theme_light()+ scale_colour_brewer(palette = 'Paired')
+power_axis= f_col1 + pi + plot_layout(design = layout)
+
+######################################################################################################################
+res_coll_df=res_coll %>% dplyr::select(F_strat,Coverage,Coverage_2sls,Coverage_GxE) %>% 
+  pivot_longer(Coverage:Coverage_GxE, names_to = "Method", values_to = "Coverage")
+res_coll_df$Method = as.factor(res_coll_df$Method)
+levels(res_coll_df$Method) =c('Collider Correction','2SLS','GxE')
+
+ci <- ggplot(res_coll_df, aes(F_strat, Coverage,group=Method,
+                              color=Method)) +geom_line()+ geom_point() + theme_light()+ scale_colour_brewer(palette = 'Paired')
+coverage_axis= f_col1 + ci + plot_layout(design = layout)
+
+##############################################################################################################
+##############################################################################################################
+##############################################################################################################
+
+tot_pl=(bias_axis | se_axis)/(power_axis |coverage_axis) + plot_layout(guides = 'collect') 
+ggsave('/lustre/home/vk282/sex_strat/figs_Coll/1smr_NoHeterog_7222.pdf',tot_pl)
+
