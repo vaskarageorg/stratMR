@@ -1,0 +1,365 @@
+#T1E, Figure 4 in DOI 10.1002/gepi.22512
+setwd('/lustre/home/vk282/sex_strat/Review_Sims_8722/TIE_For_Selection/')
+library(mr.raps);library(ggplot2);library(dplyr);library(RColorBrewer);library(patchwork);library(tidyverse)
+nondiff = seq(0,0.7,length.out = 5)
+power_j = matrix(nrow=length(nondiff),ncol = 4)
+colnames(power_j)=c('Strat_RAPS','Strat_RAPS_sig', 'Strat_IVW','Strat_IVW_sig')
+
+coverage= matrix(nrow=length(nondiff),ncol = 4)
+colnames(coverage)=c('Strat_RAPS','Strat_RAPS_sig', 'Strat_IVW','Strat_IVW_sig')
+
+rho_pleiotr_vec = seq(0.3,0.8,length.out = 1)
+
+res_pr_tbl2=data.frame(matrix(nrow=length(nondiff)*length(rho_pleiotr_vec),
+                              ncol=20))
+colnames(res_pr_tbl2)=c('N','beta','InSIDE violation','percent_nondiff','F','F_strat','R2',
+                        'RAPS_Strat_mean_est_SE','RAPS_strat_Power','RAPS_strat_coverage',
+                        'IVW_Strat_mean_est_SE','IVW_strat_Power','IVW_strat_coverage',
+                        'RAPS_Strat_sig_mean_est_SE','RAPS_strat_sig_Power','RAPS_strat_sig_coverage',
+                        'IVW_Strat_sig_mean_est_SE','IVW_strat_sig_Power','IVW_strat_sig_coverage',
+                        'Fstrat_subset')
+
+for (ple in 1:length(rho_pleiotr_vec)){
+  rho_pl=rho_pleiotr_vec[ple]
+  for(j in 1:length(nondiff)){
+    
+    n = 16000;L = 60
+    n_nondiff=round(L*nondiff[j] )
+    nSim = 25000
+    RES_Strat_sig = RES_Strat =RES_Strat_ivw=RES_Strat_ivw_sig= matrix(nrow=nSim,ncol=2)
+    FStrat      = FUnStrat = Fstrat_subset = RHO = NULL
+    pv_t = matrix(nrow = nSim,ncol = 4)
+    colnames(pv_t)=c('Strat_RAPS','Strat_RAPS_sig',
+                     'Strat_IVW','Strat_IVW_sig')
+    
+    rsq_f=rsq_m=NULL
+    for(i in 1:nSim){
+      
+      ##############################################
+      # Sample 1 (only generate SNP-exposure data) #
+      ##############################################
+      
+      S       = rbinom(n,1,0.5)
+      G       = matrix(rbinom(n = n*L,size = 1,prob = 0.2),nrow = n,ncol = L)
+      U       = rnorm(n,0,2)
+      epsilon = rnorm(n)
+      alpha   = matrix(rnorm(L,0,0.2), nrow = L, ncol = 1)
+      gamma   = matrix(rnorm(L,0.07,0.05), nrow = L, ncol = 1) + rho_pl *alpha
+      
+      delta   = matrix(runif(L,0.02,0.45), nrow = L, ncol = 1)
+      delta[(L-n_nondiff):L,]=0
+      
+      gamma_S = 0.1
+      X       =  G%*%gamma + gamma_S*S +  S*(G %*%delta)+ U + epsilon
+      
+      # Extract G-X associations in men and women
+      
+      Xm         = X[S==1]
+      Gm         = subset(G,S==1)
+      ResM       = summary(lm(Xm~Gm))
+      rsq_m[i]=ResM$r.squared
+      BetaXGm    = ResM$coef[-1,1]
+      seBetaXGm  = ResM$coef[-1,2]
+      
+      Xf         = X[S==0]
+      Gf         = subset(G,S==0)
+      ResF       = summary(lm(Xf~Gf))
+      rsq_f[i]=ResF$r.squared
+      BetaXGf    = ResF$coef[-1,1]
+      seBetaXGf  = ResF$coef[-1,2]
+      
+      
+      # Extract G-X associations in everyone
+      
+      Res       = summary(lm(X~G))
+      BetaXG    = Res$coef[-1,1]
+      seBetaXG  = Res$coef[-1,2]
+      
+      
+      # Calculate SNP-exposure association 
+      # difference in men and women
+      
+      DiffX = BetaXGm-BetaXGf ; seDiffX = sqrt(seBetaXGm^2+seBetaXGf^2)
+      
+      #########################################################
+      # Sample 2 (generate SNP-exposure and SNP-outcome data) #
+      # note keep parameters alpha,delta,gamma the same       #
+      #########################################################
+      S = rbinom(n,1,0.5);G = matrix(rbinom(n = n*L,size = 1,prob = 0.2),nrow = n,ncol = L);U = rnorm(n,0,2)
+      epsilon = rnorm(n);epsilon2 = rnorm(n);betaX = 0;betaS = 0.2
+      X =  G%*%gamma + gamma_S*S +  S*(G %*%delta)+ U + epsilon
+      Y =  betaX*X + betaS*S + G %*%alpha + U + epsilon2
+      
+      # Extract G-Y associations in men and women
+      Ym         = Y[S==1]; Gm = subset(G,S==1)
+      ResM       = summary(lm(Ym~Gm))
+      BetaYGm    = ResM$coef[-1,1]
+      seBetaYGm  = ResM$coef[-1,2]
+      
+      Yf         = Y[S==0]
+      Gf         = subset(G,S==0)
+      ResF       = summary(lm(Yf~Gf))
+      BetaYGf    = ResF$coef[-1,1]
+      seBetaYGf  = ResF$coef[-1,2]
+      
+      
+      # Extract G-Y associations in everyone
+      
+      Res       = summary(lm(Y~G))
+      BetaYG    = Res$coef[-1,1]
+      seBetaYG  = Res$coef[-1,2]
+      
+      
+      # Calculate SNP-outcomw association 
+      # difference in men and women
+      
+      DiffY = BetaYGm-BetaYGf ; seDiffY = sqrt(seBetaYGm^2+seBetaYGf^2)
+      
+      # Mean F stat across instruments
+      # for sex-stratified method
+      
+      FStrat[i]   = mean(((BetaXGm-BetaXGf)^2)/(seBetaXGm^2+seBetaXGf^2))
+      FUnStrat[i] = mean((BetaXG^2)/seBetaXG^2)
+      
+      # Calculate correlation between
+      # main SNP effect and pleiotropy
+      
+      RHO[i]  = cor(alpha,gamma)
+      
+      # apply MR-RAPS
+      #1. stratified
+      
+      M             = mr.raps.all(DiffX,DiffY, seDiffX, seDiffY)[6,3:4]
+      RES_Strat[i,] = c(M$beta.hat,M$beta.se)
+      zst=M$beta.hat/M$beta.se
+      pv_t[i,1]=2*(1-pnorm(abs(zst)))
+      
+      #2. stratified only with significant hits
+      sig_sex_ind=which(((BetaXGm-BetaXGf)^2)/(seBetaXGm^2+seBetaXGf^2) > 2)
+      
+      Fstrat_subset = mean(((BetaXGm[sig_sex_ind]-BetaXGf[sig_sex_ind])^2)/(seBetaXGm[sig_sex_ind]^2+seBetaXGf[sig_sex_ind]^2))
+      
+      M             = mr.raps.all(DiffX[sig_sex_ind],DiffY[sig_sex_ind], 
+                                      seDiffX[sig_sex_ind], seDiffY[sig_sex_ind])[6,3:4]
+      RES_Strat_sig[i,] = c(M$beta.hat,M$beta.se)
+      zst=M$beta.hat/M$beta.se
+      pv_t[i,2]=2*(1-pnorm(abs(zst)))
+      
+      #Apply IVW
+      
+      # 3. IVW stratified
+      
+      M             = summary(lm(DiffY ~ 0+DiffX,weights = (seDiffY)^(-2)))$coef
+      RES_Strat_ivw[i,] = c(M[,1],M[,2])
+      pv_t[i,3]=M[,4]
+      
+      # 3. IVW stratified only with sig
+      
+      M             = summary(lm(DiffY[sig_sex_ind] ~ 0+DiffX[sig_sex_ind],
+                                 weights = (seDiffY[sig_sex_ind])^(-2)))$coef
+      RES_Strat_ivw_sig[i,] = c(M[,1],M[,2])
+      pv_t[i,4]=M[,4]
+      
+      
+      sink("select_progr.txt")
+      print(paste('NSim:',i/nSim,'Pleiotr:',ple/length(rho_pleiotr_vec),'Sample Nondiff:',j/length(nondiff)))
+      sink()
+    }
+    
+    print(ple)
+    power_j[j,] = c(apply(pv_t,2, function(x) sum(x<0.05))/nSim)
+    
+    coverage[j,1] = sum((RES_Strat[,1]-1.96*RES_Strat[,2] < betaX) & (RES_Strat[,1]+1.96*RES_Strat[,2] > betaX))/nSim
+    coverage[j,2] = sum((RES_Strat_sig[,1]-1.96*RES_Strat_sig[,2] < betaX) & (RES_Strat_sig[,1]+1.96*RES_Strat_sig[,2] > betaX))/nSim
+    coverage[j,3] = sum((RES_Strat_ivw[,1]-1.96*RES_Strat_ivw[,2] < betaX) & (RES_Strat_ivw[,1]+1.96*RES_Strat_ivw[,2] > betaX))/nSim
+    coverage[j,4] = sum((RES_Strat_ivw_sig[,1]-1.96*RES_Strat_ivw_sig[,2] < betaX) & (RES_Strat_ivw_sig[,1]+1.96*RES_Strat_ivw_sig[,2] > betaX))/nSim
+    
+    
+    #Res df
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,1]=n
+    res_pr_tbl2$Fstrat_subset[(ple-1)*length(nondiff)+j]=paste(round(median(Fstrat_subset),4),round(sd(Fstrat_subset),4),sep = ', ')
+    
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,2]=betaX
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,3]=round(mean(RHO),4)
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,4]=n_nondiff
+    
+    
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,5]=paste(round(mean(FUnStrat),4),round(sd(FUnStrat),4),sep = ', ')
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,6]=paste(round(mean(FStrat),4),round(sd(FStrat),4),sep = ', ')
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,7]=paste(paste(round(mean(rsq_f*100),4),'%',sep = ''),
+                                                   paste(round(sd(rsq_f*100),4),'%',sep = ''),
+                                                   sep = ', ')
+    #Results mean est SE for the 4 methods
+    #1. Raps
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,8]=paste(round(apply(RES_Strat,2,mean)[1],4),
+                                                   '(',
+                                                   round(apply(RES_Strat,2,mean)[2],4),
+                                                   ')',sep='')
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,9]= power_j[j,1]
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,10]=coverage[j,1]
+    
+    #2. IVW
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,11]=paste(round(apply(RES_Strat_ivw,2,mean)[1],4),
+                                                    '(', round(apply(RES_Strat_ivw,2,mean)[2],4), ')',sep='')
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,12]= power_j[j,3] 
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,13]=coverage[j,3]
+    
+    #3. Raps+sig
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,14]=paste(round(apply(RES_Strat_sig,2,mean)[1],4),
+                                                    '(', round(apply(RES_Strat_sig,2,mean)[2],4), ')',sep='')
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,15]=power_j[j,2]
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,16]=coverage[j,2]
+    #2. IVW+sig
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,17]=paste(round(apply(RES_Strat_ivw_sig,2,mean)[1],4), '(',
+                                                    round(apply(RES_Strat_ivw_sig,2,mean)[2],4), ')',sep='')
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,18]= power_j[j,4] 
+    res_pr_tbl2[(ple-1)*length(nondiff)+j,19]=coverage[j,4]
+    
+write.csv(res_pr_tbl2,"select_progr_b.csv")
+    }}
+
+############################################################
+res_pr_tbl2$`InSIDE violation`=round(res_pr_tbl2$`InSIDE violation`,1)
+colnames(res_pr_tbl2)[3]='InSIDE1_violation'
+
+
+power_df=res_pr_tbl2 %>%
+  dplyr::select(N,F,F_strat,Fstrat_subset,InSIDE1_violation,percent_nondiff, RAPS_strat_Power,IVW_strat_Power,RAPS_strat_sig_Power,IVW_strat_sig_Power) %>%
+  pivot_longer(RAPS_strat_Power:IVW_strat_sig_Power,names_to = "Method", values_to = "Power")
+
+power_df$F_strat =as.numeric(sub("\\,.*", "", power_df$F_strat))
+power_df$Fstrat_subset =as.numeric(sub("\\,.*", "", power_df$Fstrat_subset))
+
+power_df$FSTR_Plotting= ifelse(power_df$Method %in% c("IVW_strat_sig_Power", "RAPS_strat_sig_Power"), power_df$Fstrat_subset, power_df$F_strat)
+
+power_df$F =as.numeric(sub("\\,.*", "", power_df$F))
+
+power_df$InSIDE1_violation=as.factor(power_df$InSIDE1_violation)
+power_df$Method = as.factor(power_df$Method)
+levels(power_df$Method) = c("IVW_strat","IVW_strat_sig", "RAPS_strat","RAPS_strat_sig")
+
+i <- ggplot(power_df, aes(FSTR_Plotting, Power, group=interaction(InSIDE1_violation,Method),
+                          color=Method, shape=InSIDE1_violation, linetype=InSIDE1_violation))
+power_pl=i+geom_line()+geom_point()+theme_light()+#+ylim(0,1)
+ scale_colour_brewer(palette = 'Paired')
+p <- ggplot(power_df, aes(F, Power)) + geom_blank()+theme_classic() +
+  scale_x_continuous(breaks = round(seq(min(power_df$F), max(power_df$F), by = 5)))
+
+f_col1=p + theme(axis.line.y = element_blank(), axis.text.y = element_blank(),
+                 axis.ticks.y = element_blank(), axis.title.y = element_blank(),
+                 panel.grid.minor.y = element_blank(), panel.grid.major.y = element_blank())
+layout <- c(area(t = 0, l = 0, b = 21, r = 1),
+            area(t = 0, l = 0, b = 20, r = 1))
+power_axis = f_col1 + power_pl + plot_layout(design = layout)
+
+#Coverage
+colnames(res_pr_tbl2)[3]='InSIDE1_violation'
+cov_df=res_pr_tbl2 %>%
+  dplyr::select(N,F,F_strat,InSIDE1_violation,percent_nondiff,
+                RAPS_strat_coverage,IVW_strat_coverage,
+                RAPS_strat_sig_coverage,IVW_strat_sig_coverage) %>%
+  pivot_longer(RAPS_strat_coverage:IVW_strat_sig_coverage,names_to = "Method", values_to = "Coverage")
+
+cov_df$F_strat =as.numeric(sub("\\,.*", "", cov_df$F_strat))
+cov_df$F =as.numeric(sub("\\,.*", "", cov_df$F))
+cov_df$Method = as.factor(cov_df$Method)
+levels(cov_df$Method) = c("IVW_strat","IVW_strat_sig",
+                          "RAPS_strat","RAPS_strat_sig")
+
+cov_df$InSIDE1_violation=as.factor(cov_df$InSIDE1_violation)
+i <- ggplot(cov_df, aes(F_strat, Coverage,
+                        group=interaction(InSIDE1_violation,Method),
+                        color=Method,
+                        shape=InSIDE1_violation,
+                        linetype=InSIDE1_violation))
+cov_pl=i+geom_line()+geom_point()+theme_light()+ylim(0,1)+ scale_colour_brewer(palette = 'Paired')
+p <- ggplot(cov_df, aes(F, Coverage)) + geom_blank()+theme_classic() +
+  scale_x_continuous(breaks = round(seq(min(cov_df$F), max(cov_df$F), by = 5)))
+
+f_col1=p + theme(axis.line.y = element_blank(), axis.text.y = element_blank(),
+                 axis.ticks.y = element_blank(), axis.title.y = element_blank(),
+                 panel.grid.minor.y = element_blank(), panel.grid.major.y = element_blank())
+layout <- c(area(t = 0, l = 0, b = 21, r = 1),
+            area(t = 0, l = 0, b = 20, r = 1))
+cov_axis = f_col1 + cov_pl + plot_layout(design = layout)
+
+##Bias
+bias_df=res_pr_tbl2 %>%
+  dplyr::select(F,F_strat,InSIDE1_violation,percent_nondiff,
+                RAPS_Strat_mean_est_SE,IVW_Strat_mean_est_SE,
+                RAPS_Strat_sig_mean_est_SE,IVW_Strat_sig_mean_est_SE) %>%
+  pivot_longer(RAPS_Strat_mean_est_SE:IVW_Strat_sig_mean_est_SE,
+               names_to = "Method", values_to = "Bias")
+
+bias_df$Method = as.factor(bias_df$Method)
+bias_df$F_strat =as.numeric(sub("\\,.*", "", bias_df$F_strat))
+bias_df$F =as.numeric(sub("\\,.*", "", bias_df$F))
+levels(bias_df$Method) = c("IVW_strat","IVW_strat_sig", "RAPS_strat","RAPS_strat_sig")
+
+bias_df$InSIDE1_violation=as.factor(bias_df$InSIDE1_violation)
+bias_df$Bias=as.numeric(sub("\\(.*", "", bias_df$Bias))-betaX
+
+i <- ggplot(bias_df, aes(F_strat, Bias,
+                         group=interaction(InSIDE1_violation,Method),
+                         color=Method,shape=InSIDE1_violation,
+                         linetype=InSIDE1_violation))
+bias_pl=i+geom_line()+geom_point()+theme_light()+ scale_colour_brewer(palette = 'Paired')
+p <- ggplot(bias_df, aes(F, Bias)) + geom_blank()+theme_classic() +
+  scale_x_continuous(breaks = round(seq(min(bias_df$F), max(bias_df$F), by = 5)))
+
+f_col1=p + theme(axis.line.y = element_blank(),
+                 axis.text.y = element_blank(),
+                 axis.ticks.y = element_blank(),
+                 axis.title.y = element_blank(),
+                 panel.grid.minor.y = element_blank(),
+                 panel.grid.major.y = element_blank())
+
+layout <- c(area(t = 0, l = 0, b = 21, r = 1),
+            area(t = 0, l = 0, b = 20, r = 1))
+
+bias_axis = f_col1 + bias_pl + plot_layout(design = layout)
+
+#EmpSE
+empse_df=res_pr_tbl2 %>%
+  dplyr::select(F,F_strat,InSIDE1_violation,percent_nondiff,
+                RAPS_Strat_mean_est_SE,IVW_Strat_mean_est_SE,
+                RAPS_Strat_sig_mean_est_SE,IVW_Strat_sig_mean_est_SE) %>%
+  pivot_longer(RAPS_Strat_mean_est_SE:IVW_Strat_sig_mean_est_SE,
+               names_to = "Method", values_to = "EmpSE")
+empse_df$InSIDE1_violation = as.factor(empse_df$InSIDE1_violation)
+empse_df$Method = as.factor(empse_df$Method)
+empse_df$F_strat =as.numeric(sub("\\,.*", "", empse_df$F_strat))
+empse_df$F =as.numeric(sub("\\,.*", "", empse_df$F))
+empse_df$F_Fstr = paste(empse_df$F, empse_df$F_strat,sep=', ')
+
+levels(empse_df$Method) = c("IVW_strat","IVW_strat_sig",
+                            "RAPS_strat","RAPS_strat_sig")
+
+empse_df$InSIDE1_violation=as.factor(empse_df$InSIDE1_violation)
+empse_df$EmpSE=as.numeric(str_replace(string = gsub("^.*\\(","",empse_df$EmpSE),
+                                      pattern = '\\)',replacement = ''))
+
+i <- ggplot(empse_df, aes(F_strat, EmpSE,
+                          group=interaction(InSIDE1_violation,Method),
+                          color=Method,shape=InSIDE1_violation,
+                          linetype=InSIDE1_violation))
+empse_pl=i+geom_line()+geom_point()+theme_light()+ 
+  scale_colour_brewer(palette = 'Paired') + ylim(0,0.3)
+p <- ggplot(empse_df, aes(F, EmpSE)) + geom_blank()+theme_classic() +
+  scale_x_continuous(breaks = round(seq(min(empse_df$F), max(empse_df$F), by = 5)))
+
+f_col1=p + theme(axis.line.y = element_blank(),
+                 axis.text.y = element_blank(),
+                 axis.ticks.y = element_blank(),
+                 axis.title.y = element_blank(),
+                 panel.grid.minor.y = element_blank(),
+                 panel.grid.major.y = element_blank())
+
+layout <- c(area(t = 0, l = 0, b = 21, r = 1),
+            area(t = 0, l = 0, b = 20, r = 1))
+
+empSe_axis = f_col1 + empse_pl + plot_layout(design = layout)
+########################################################################################
+########################################################################################
+(( bias_axis| empSe_axis) / (cov_axis|power_axis)) + plot_layout(guides = 'collect')
+ggsave("select_progr_b.pdf")
