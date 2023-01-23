@@ -1,0 +1,93 @@
+#A general function for one-sample data that either performs a RE sex-stratified MR (qstat=F) or performs a heterogeneity test and performs
+#either a fixed-effects or a RE MR (qstat=T, default option)
+
+sexstrat_1SMR = function(X,G,S,Y,qstat=T){
+library(mr.raps);library(RadialMR)
+raps_strat = function(X,S,G,Y,covariates,qstat=T ){
+
+  na_xcov=which(is.na(X) | is.na(covariates))
+  na_ycov=which(is.na(Y) | is.na(covariates))
+  
+  Xt = matrix(nrow=length(X)); Yt = matrix(nrow=length(Y))
+  
+  Xt[-na_xcov,] = summary(lm(X ~ .,data=covariates))$residuals
+  Yt[-na_ycov,] = summary(lm(Y ~ .,data=covariates))$residuals
+  
+  X = Xt; Y = Yt
+  Xm = X[S==1]; Gm = G[S==1,]; ResM = summary(lm(Xm~.,data=Gm));rsq_m=rsq_f=NULL
+  rsq_m=ResM$r.squared; BetaXGm = ResM$coef[-1,1]; seBetaXGm = ResM$coef[-1,2]
+  
+  Xf = X[S==0]; Gf = subset(G,S==0); ResF = summary(lm(Xf~.,data=Gf));rsq_f=ResF$r.squared; BetaXGf = ResF$coef[-1,1]; seBetaXGf = ResF$coef[-1,2]
+  # Extract G-X associations in everyone
+  Res = summary(lm(X~.,data=G)); BetaXG = Res$coef[-1,1]; seBetaXG = Res$coef[-1,2]
+  # Calculate SNP-exposure association difference in men and women
+  DiffX = BetaXGm-BetaXGf ; seDiffX = sqrt(seBetaXGm^2+seBetaXGf^2)
+
+  Ym = Y[S==1];Gm = subset(G,S==1);Xm = X[S==1]
+  Yf = Y[S==0];Gf = subset(G,S==0);Xg= X[S==0]
+  #Coll. Corr #1/ collider-biased estimated coefficient of X,betahat_star
+  XGS1=cbind(X,G,S)
+  
+  if (length(table(Y))> 2){yxg_coll=summary(lm(Y ~ .,data=XGS1))$coef}
+  if (length(table(Y))==2){yxg_coll=summary(glm(Y ~ .,data=XGS1,family=binomial(link='logit')))$coef}
+  
+  beta_hat_star=yxg_coll[2,1]; se_beta_hat_star=yxg_coll[2,2]
+  
+  #2/ collider-biased estimated coeff of G, alphahat_star
+  XmGm=cbind(Xm,Gm)
+  if (length(table(Y))==2){yxg_coll_M=summary(glm(Ym ~ .,data=XmGm,family=binomial(link='logit')))$coef}
+  if (length(table(Y))>2){yxg_coll_M=summary(lm(Ym ~ .,data=XmGm))$coef}
+  alpha_hat_star1=yxg_coll_M[-c(1,2),1]; se_alpha_hat_star1=yxg_coll_M[-c(1,2),2]
+  
+  XfGf=cbind(Xf,Gf)
+  if (length(table(Y))==2){yxg_coll_F=summary(glm(Yf ~ .,data=XfGf,family=binomial(link='logit')))$coef}
+  if (length(table(Y))>2){yxg_coll_F=summary(lm(Yf ~ .,data=XfGf))$coef}
+  
+  yxg_coll_F=summary(lm(Yf ~ .,data=XfGf))$coef
+  alpha_hat_star0=yxg_coll_F[-c(1,2),1]; se_alpha_hat_star0=yxg_coll_F[-c(1,2),2]
+  Diff_alphahat = alpha_hat_star1 - alpha_hat_star0
+  se_Diff_alphahat = sqrt(se_alpha_hat_star1^2 + se_alpha_hat_star0^2)
+  
+  duplicated(substr(  names(DiffX), 1, nchar(names(DiffX))-4))
+  rsid_SNPs=substr(  names(DiffX), 1, nchar(names(DiffX))-4)
+  n_occur <- data.frame(table(rsid_SNPs))
+  dupl_i1=which(rsid_SNPs %in% n_occur$rsid_SNPs[n_occur$Freq > 1]==T)
+  
+  DiffXi=DiffX[-dupl_i1];   seDiffXi=seDiffX[-dupl_i1]
+  max(2*(1-pnorm(abs(DiffXi/seDiffXi))))
+  roundp1= round(-log(max(2*(1-pnorm(abs(DiffXi/seDiffXi)))))/log(10))
+  ceiling_dec <- function(x, level=1) round(x + 5*10^(-level-1), level)
+
+  pvalthresh_WCC=ceiling_dec(max(2*(1-pnorm(abs(DiffXi/seDiffXi)))),roundp1)
+
+  betahat_diff = mr.raps.all(b_exp = DiffX,b_out = Diff_alphahat, se_exp = seDiffX,se_out = se_Diff_alphahat)
+  
+  #change to od_F  and L2 loss function 
+  if (qstat==T){
+  form1=format_radial(BXG = DiffX,BYG = Diff_alphahat, seBXG = seDiffX,seBYG = se_Diff_alphahat)
+  rad4=RadialMR::ivw_radial(form1)
+  nSNP_1 = ncol(G)
+  Q_res=rad4$qstatistic;Qp_exact = 1-pchisq(rad4$qstatistic,df = nSNP_1-1)
+  
+  if (Qp_exact > 0.05){
+  beta_hat = beta_hat_star + betahat_diff[1,3];se_beta_hat = sqrt(se_beta_hat_star^2 + betahat_diff[1,4]^2)
+  zst=beta_hat/se_beta_hat;pv_coll=2*(1-pnorm(abs(zst))) }
+  
+  if (Qp_exact < 0.05){
+  beta_hat = beta_hat_star + betahat_diff[4,3];se_beta_hat = sqrt(se_beta_hat_star^2 + betahat_diff[4,4]^2)
+  zst=beta_hat/se_beta_hat;pv_coll=2*(1-pnorm(abs(zst))) }
+  }
+  
+  if (qstat==F){
+  print('Random-Effects model')
+  beta_hat = beta_hat_star + betahat_diff[4,3];se_beta_hat = sqrt(se_beta_hat_star^2 + betahat_diff[4,4]^2)
+  zst=beta_hat/se_beta_hat;pv_coll=2*(1-pnorm(abs(zst))) 
+  Q_res=Qp_exact=NA}
+  Fstrat=(DiffX/seDiffX)^2
+  
+  list_outc = list(beta_hat=beta_hat,se_beta_hat=se_beta_hat,
+                   pv_coll=pv_coll,Q_res=Q_res,Qp_exact=Qp_exact,Fstrat=Fstrat)
+  
+  return(list_outc)
+}
+}
